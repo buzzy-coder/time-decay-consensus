@@ -1,10 +1,22 @@
 // src/verify.rs
 
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{SigningKey, VerifyingKey, Signature, Signer, Verifier};
+use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey, Verifier};
+use rand::RngCore;
 use rand::rngs::OsRng;
+use thiserror::Error;
 
-use crate::vote::SignedVote;
+use crate::vote::{DecayType, SignedVote};
+
+#[derive(Error, Debug, PartialEq)]
+pub enum VerificationError {
+    #[error("Invalid signature")]
+    InvalidSignature,
+    #[error("Timestamp is too old")]
+    TimestampExpired,
+    #[error("Timestamp is in the future")]
+    TimestampInFuture,
+}
 
 impl SignedVote {
     /// Generate a new signed vote
@@ -32,22 +44,29 @@ impl SignedVote {
     }
 
     /// Verify the vote signature and timestamp
-    pub fn verify(&self, max_age_secs: i64) -> bool {
+    pub fn verify(&self, max_age_secs: i64) -> Result<(), VerificationError> {
         let message = format!("{}:{}:{}", self.voter_id, self.proposal_id, self.timestamp);
         let now = Utc::now();
         let age_secs = (now - self.timestamp).num_seconds();
 
         // Reject if timestamp is too old or in the future (±5 seconds allowed)
-        if age_secs < -5 || age_secs > max_age_secs {
-            eprintln!("Vote timestamp out of bounds");
-            return false;
+        if age_secs < -5 {
+            return Err(VerificationError::TimestampInFuture);
+        }
+        if age_secs > max_age_secs {
+            return Err(VerificationError::TimestampExpired);
         }
 
-        self.public_key.verify(message.as_bytes(), &self.signature).is_ok()
+        self.public_key
+            .verify(message.as_bytes(), &self.signature)
+            .map_err(|_| VerificationError::InvalidSignature)
     }
-}
 
-/// Utility function to generate a validator keypair
-pub fn generate_keypair() -> SigningKey {
-    SigningKey::generate(&mut OsRng)
+    /// Utility function to generate a validator keypair
+    pub fn generate_keypair() -> SigningKey {
+        let mut rng = OsRng;
+        let mut secret = [0u8; SECRET_KEY_LENGTH];
+        rng.fill_bytes(&mut secret);
+        SigningKey::from_bytes(&secret)
+    }
 }
