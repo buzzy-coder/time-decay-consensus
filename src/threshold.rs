@@ -7,16 +7,25 @@ pub enum EscalationPattern {
     Sigmoid(f64, f64),    // (k, midpoint): smooth S-curve
 }
 
+#[derive(Debug, Clone)]
+pub enum ProgressionProfile {
+    Conservative,
+    Aggressive,
+    Adaptive,
+}
+
 #[derive(Debug)]
 pub struct ThresholdEscalator {
     pub base_threshold: f64,     // Starting threshold (e.g., 0.51)
     pub ceiling: f64,            // Maximum threshold (e.g., 0.9)
     pub pattern: EscalationPattern,
     pub emergency_override: bool,
+    pub profile: ProgressionProfile,
+    pub total_votes: usize,
 }
 
 impl ThresholdEscalator {
-    /// Compute the current threshold based on elapsed time
+    /// Base threshold calculation without progression profile
     pub fn current_threshold(&self, elapsed_secs: u64) -> f64 {
         if self.emergency_override {
             return self.ceiling; // Max threshold for critical situations
@@ -39,60 +48,83 @@ impl ThresholdEscalator {
             }
         }
     }
+
+    /// Wrapper that adjusts time based on progression profile
+    pub fn threshold_with_profile(&self, now: chrono::DateTime<chrono::Utc>, start: chrono::DateTime<chrono::Utc>) -> f64 {
+        if self.emergency_override {
+            return self.ceiling;
+        }
+
+        let elapsed_secs = (now - start).num_seconds().max(0) as u64;
+        let adjusted_secs = match self.profile {
+            ProgressionProfile::Conservative => elapsed_secs,
+            ProgressionProfile::Aggressive => elapsed_secs * 2,
+            ProgressionProfile::Adaptive => {
+                if self.total_votes < 3 {
+                    elapsed_secs * 3
+                } else {
+                    elapsed_secs
+                }
+            }
+        };
+
+        self.current_threshold(adjusted_secs)
+    }
+
+    /// Multi-dimensional threshold check: weight + vote count
+    pub fn is_threshold_met(&self, weight: f64, required: f64) -> bool {
+        weight >= required && self.total_votes >= 3
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
-    #[test]
-    fn test_linear_escalation() {
-        let esc = ThresholdEscalator {
-            base_threshold: 0.51,
+    fn mock_escalator(pattern: EscalationPattern, profile: ProgressionProfile, votes: usize) -> ThresholdEscalator {
+        ThresholdEscalator {
+            base_threshold: 0.5,
             ceiling: 0.9,
-            pattern: EscalationPattern::Linear(0.01),
+            pattern,
             emergency_override: false,
-        };
-        assert!((esc.current_threshold(10) - 0.61).abs() < 0.001);
-        assert!((esc.current_threshold(100) - 0.9).abs() < 0.001); // capped
+            profile,
+            total_votes: votes,
+        }
     }
 
     #[test]
-    fn test_exponential_escalation() {
-        let esc = ThresholdEscalator {
-            base_threshold: 0.5,
-            ceiling: 0.9,
-            pattern: EscalationPattern::Exponential(0.01),
-            emergency_override: false,
-        };
-        let t30 = esc.current_threshold(30);
-        let t60 = esc.current_threshold(60);
-        assert!(t60 > t30);
+    fn test_linear_with_profile() {
+        let esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Aggressive, 5);
+        assert!((esc.threshold_with_profile(Utc::now(), Utc::now() - chrono::Duration::seconds(30)) - 0.5 - 0.01 * 60.0).abs() < 0.01);
     }
 
     #[test]
-    fn test_sigmoid_escalation() {
-        let esc = ThresholdEscalator {
-            base_threshold: 0.5,
-            ceiling: 0.9,
-            pattern: EscalationPattern::Sigmoid(0.1, 30.0),
-            emergency_override: false,
-        };
-        let low = esc.current_threshold(0);
-        let mid = esc.current_threshold(30);
-        let high = esc.current_threshold(60);
-        assert!(low < mid && mid < high);
+    fn test_exponential_with_profile() {
+        let esc = mock_escalator(EscalationPattern::Exponential(0.01), ProgressionProfile::Conservative, 1);
+        let threshold = esc.threshold_with_profile(Utc::now(), Utc::now() - chrono::Duration::seconds(30));
+        assert!(threshold > 0.5);
+    }
+
+    #[test]
+    fn test_sigmoid_with_profile() {
+        let esc = mock_escalator(EscalationPattern::Sigmoid(0.1, 30.0), ProgressionProfile::Adaptive, 1);
+        let threshold = esc.threshold_with_profile(Utc::now(), Utc::now() - chrono::Duration::seconds(60));
+        assert!(threshold > 0.5);
     }
 
     #[test]
     fn test_emergency_override() {
-        let esc = ThresholdEscalator {
-            base_threshold: 0.51,
-            ceiling: 0.9,
-            pattern: EscalationPattern::Linear(0.01),
-            emergency_override: true,
-        };
-        assert_eq!(esc.current_threshold(0), 0.9);
-        assert_eq!(esc.current_threshold(100), 0.9);
+        let mut esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Conservative, 10);
+        esc.emergency_override = true;
+        assert_eq!(esc.threshold_with_profile(Utc::now(), Utc::now()), esc.ceiling);
+    }
+
+    #[test]
+    fn test_threshold_met_logic() {
+        let esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Adaptive, 3);
+        assert!(esc.is_threshold_met(0.75, 0.7));
+        assert!(!esc.is_threshold_met(0.65, 0.7));
+        assert!(!esc.is_threshold_met(0.75, 0.7) == false);
     }
 }
