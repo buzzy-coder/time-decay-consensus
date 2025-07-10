@@ -1,7 +1,7 @@
 // src/verify.rs
 
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey, Verifier};
+use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, Signature, SigningKey, Verifier};
 use rand::RngCore;
 use rand::rngs::OsRng;
 use thiserror::Error;
@@ -69,4 +69,6 @@ impl SignedVote {
         rng.fill_bytes(&mut secret);
         SigningKey::from_bytes(&secret)
     }
+
 }
+

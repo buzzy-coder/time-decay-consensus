@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, VerifyingKey};
 
+
+use ed25519_dalek::{Signer, Signature, SigningKey};
 #[derive(Debug, Clone, Copy)]
 pub enum DecayType {
     Linear,
@@ -24,3 +26,9 @@ pub struct SignedVote {
     pub signature: Signature,
     pub public_key: VerifyingKey,    
 }
+
+pub fn sign_vote(voter_id: String, signing_key: &SigningKey, timestamp: DateTime<Utc>) -> Signature {
+    let message = format!("{}{}", voter_id, timestamp.to_rfc3339());
+    signing_key.sign(message.as_bytes())
+}
+
