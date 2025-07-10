@@ -9,7 +9,7 @@ mod weight_engine;
 mod trust;
 
 use vote::{SignedVote, DecayType, ProposalType};
-use verify::{verify_vote_signature, generate_keypair};
+use verify::{verify, generate_keypair};
 use threshold::{ThresholdEscalator, EscalationPattern, ProgressionProfile};
 use weight_engine::WeightEngine;
 use trust::TrustEngine;
@@ -52,17 +52,18 @@ fn main() {
     };
 
     let now = Utc::now();
-    let vote = SignedVote::new(
-        voter_id.clone(),
+    let vote = SignedVote {
+        voter_id: voter_id.clone(),
         proposal_id,
+        timestamp: now,
         original_weight,
-        now,
         decay_model,
-        &signing_key,
-    );
+        signature: vote::sign_vote(voter_id.clone(), &signing_key, now),
+        public_key: verify_key.clone(),
+    };
 
     // Step 3: Verify vote signature
-    if verify_vote_signature(&vote, &verify_key) {
+    if verify(&vote, &verify_key) {
         println!("✅ Signature verification successful.");
     } else {
         println!("❌ Invalid vote signature. Exiting.");
