@@ -1,71 +1,113 @@
+use chrono::{DateTime, Utc};
+use std::io;
+
 mod vote;
 mod decay;
 mod verify;
 mod threshold;
+mod weight_engine;
+mod trust;
 
-use chrono::{DateTime, Utc};
-use vote::{SignedVote, DecayType};
-use decay::{ExponentialDecay, LinearDecay, SteppedDecay, DecayModel};
-use threshold::{ThresholdEscalator, EscalationPattern};
-
-fn get_vote_weight(vote: &SignedVote, current_time: DateTime<Utc>) -> f64 {
-    let age = (current_time - vote.timestamp).num_seconds() as u64;
-
-    match vote.decay_model {
-        DecayType::Exponential => {
-            let model = ExponentialDecay { rate: 0.005 };
-            model.compute_weight(vote.original_weight, age as f64)
-        }
-        DecayType::Linear => {
-            let model = LinearDecay { rate: 0.001 };
-            model.compute_weight(vote.original_weight, age as f64)
-        }
-        DecayType::Stepped => {
-            let model = SteppedDecay {
-                decay_steps: vec![(60.0, 0.8), (180.0, 0.5), (300.0, 0.2)],
-            };
-            model.compute_weight(vote.original_weight, age as f64)
-        }
-    }
-}
+use vote::{SignedVote, DecayType, ProposalType};
+use verify::{verify_vote_signature, generate_keypair};
+use threshold::{ThresholdEscalator, EscalationPattern, ProgressionProfile};
+use weight_engine::WeightEngine;
+use trust::TrustEngine;
 
 fn main() {
-    // Step 1: Generate validator keypair
-    let keypair = SignedVote::generate_keypair();
+    // Step 1: Generate a keypair (in real use case, would be per-validator)
+    let (signing_key, verify_key) = generate_keypair();
 
-    // Step 2: Create a new vote
+    // Step 2: Collect dynamic input from user
+    let mut input = String::new();
+    println!("Enter your voter ID:");
+    io::stdin().read_line(&mut input).unwrap();
+    let voter_id = input.trim().to_string();
+
+    input.clear();
+    println!("Enter proposal ID:");
+    io::stdin().read_line(&mut input).unwrap();
+    let proposal_id = input.trim().to_string();
+
+    input.clear();
+    println!("Enter original vote weight (e.g., 1.0):");
+    io::stdin().read_line(&mut input).unwrap();
+    let original_weight: f64 = input.trim().parse().unwrap_or(1.0);
+
+    input.clear();
+    println!("Enter decay model (linear / exponential / stepped):");
+    io::stdin().read_line(&mut input).unwrap();
+    let decay_model = match input.trim().to_lowercase().as_str() {
+        "linear" => DecayType::Linear,
+        "stepped" => DecayType::Stepped,
+        _ => DecayType::Exponential,
+    };
+
+    input.clear();
+    println!("Proposal type (normal / critical):");
+    io::stdin().read_line(&mut input).unwrap();
+    let proposal_type = match input.trim().to_lowercase().as_str() {
+        "critical" => ProposalType::Critical,
+        _ => ProposalType::Normal,
+    };
+
+    let now = Utc::now();
     let vote = SignedVote::new(
-        "voter_001".into(),
-        "proposal_alpha".into(),
-        1.0,
-        DecayType::Linear,
-        &keypair,
+        voter_id.clone(),
+        proposal_id,
+        original_weight,
+        now,
+        decay_model,
+        &signing_key,
     );
 
-    // Step 3: Verify the vote
-    let is_valid = vote.verify(300); // max age = 300s
-    println!("🔐 Signature valid: {:?}", is_valid);
-
-    // Step 4: Calculate decayed weight
-    let current_time = Utc::now();
-    let weight = get_vote_weight(&vote, current_time);
-    println!("⚖️ Decayed weight: {:.4}", weight);
-
-    // Step 5: Threshold escalation simulation
-    let threshold = ThresholdEscalator {
-        base_threshold: 0.51,
-        ceiling: 0.9,
-        pattern: EscalationPattern::Linear(0.01),
-        emergency_override: false,
-    };
-    let current_threshold = threshold.current_threshold(90); // simulate 90s passed
-    println!("📈 Current threshold (after 90s): {:.2}%", current_threshold * 100.0);
-
-    // Step 6: Decision
-    if weight >= current_threshold {
-        println!("✅ Vote passes threshold");
+    // Step 3: Verify vote signature
+    if verify_vote_signature(&vote, &verify_key) {
+        println!("✅ Signature verification successful.");
     } else {
-        println!("❌ Vote below threshold");
+        println!("❌ Invalid vote signature. Exiting.");
+        return;
+    }
+
+    // Step 4: Compute weight with trust and decay
+    let mut weight_engine = WeightEngine::new();
+    let trust_engine = TrustEngine::new();
+    let weight = weight_engine.calculate_weight(&vote, now, Some(&trust_engine));
+
+    println!("🧮 Final vote weight after decay & trust bonus: {:.4}", weight);
+
+    // Step 5: Threshold evaluation based on proposal type
+    let threshold_engine = match proposal_type {
+        ProposalType::Critical => ThresholdEscalator {
+            base_threshold: 0.75,
+            ceiling: 0.95,
+            pattern: EscalationPattern::Linear(0.015),
+            emergency_override: false,
+            profile: ProgressionProfile::Aggressive,
+            total_votes: 3,
+        },
+        ProposalType::Normal => ThresholdEscalator {
+            base_threshold: 0.51,
+            ceiling: 0.9,
+            pattern: EscalationPattern::Linear(0.01),
+            emergency_override: false,
+            profile: ProgressionProfile::Conservative,
+            total_votes: 3,
+        },
+    };
+
+    let current_threshold = threshold_engine.threshold_with_profile(now, vote.timestamp);
+    println!("🔢 Required threshold at this time: {:.2}%", current_threshold * 100.0);
+
+    if threshold_engine.is_threshold_met(weight, current_threshold) {
+        println!("✅ Vote passes threshold and minimum vote count");
+    } else {
+        println!("❌ Vote rejected: weight or participation too low");
+    }
+
+    // Optional: Print weight history log
+    println!("\n📜 Weight History Log:");
+    for record in weight_engine.get_history() {
+        println!("- {} -> {:.4} at {:?}", record.vote_id, record.weight, record.timestamp);
     }
 }
-

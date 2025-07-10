@@ -1,5 +1,7 @@
 // src/threshold.rs
 
+use crate::vote::ProposalType;
+
 #[derive(Debug, Clone)]
 pub enum EscalationPattern {
     Linear(f64),          // rate: e.g., 0.01 means +1% per second
@@ -46,6 +48,27 @@ impl ThresholdEscalator {
                 let threshold_range = self.ceiling - self.base_threshold;
                 self.base_threshold + sigmoid * threshold_range
             }
+        }
+    }
+
+     pub fn for_proposal_type(proposal_type: ProposalType) -> Self {
+        match proposal_type {
+            ProposalType::Normal => ThresholdEscalator {
+                base_threshold: 0.51,
+                ceiling: 0.9,
+                pattern: EscalationPattern::Linear(0.01),
+                emergency_override: false,
+                profile: ProgressionProfile::Conservative,
+                total_votes: 0,
+            },
+            ProposalType::Critical => ThresholdEscalator {
+                base_threshold: 0.75,
+                ceiling: 0.95,
+                pattern: EscalationPattern::Linear(0.02),
+                emergency_override: false,
+                profile: ProgressionProfile::Aggressive,
+                total_votes: 0,
+            },
         }
     }
 
