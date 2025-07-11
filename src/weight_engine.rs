@@ -1,8 +1,8 @@
+use crate::decay::{DecayModel, ExponentialDecay, LinearDecay, SteppedDecay};
+use crate::trust::TrustEngine;
+use crate::vote::{DecayType, SignedVote};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-use crate::decay::{DecayModel, ExponentialDecay, LinearDecay, SteppedDecay};
-use crate::vote::{SignedVote, DecayType};
-use crate::trust::TrustEngine;
 
 pub struct VoteRecord {
     pub vote_id: String,
@@ -42,11 +42,10 @@ impl WeightEngine {
             DecayType::Linear => {
                 LinearDecay { rate: 0.001 }.compute_weight(vote.original_weight, age)
             }
-            DecayType::Stepped => {
-                SteppedDecay {
-                    decay_steps: vec![(60.0, 0.8), (180.0, 0.5), (300.0, 0.2)],
-                }.compute_weight(vote.original_weight, age)
+            DecayType::Stepped => SteppedDecay {
+                decay_steps: vec![(60.0, 0.8), (180.0, 0.5), (300.0, 0.2)],
             }
+            .compute_weight(vote.original_weight, age),
         };
 
         if let Some(trust_engine) = trust {
@@ -64,20 +63,33 @@ impl WeightEngine {
         weight
     }
 
+    #[allow(dead_code)]
     pub fn batch_calculate(
         &mut self,
         votes: &[SignedVote],
         now: DateTime<Utc>,
         trust: Option<&TrustEngine>,
     ) -> Vec<f64> {
-        votes.iter().map(|v| self.calculate_weight(v, now, trust)).collect()
+        votes
+            .iter()
+            .map(|v| self.calculate_weight(v, now, trust))
+            .collect()
     }
 
+    #[allow(dead_code)]
     pub fn get_weight_history(&self) -> &HashMap<String, f64> {
         &self.cache
     }
 
     pub fn get_history(&self) -> &Vec<VoteRecord> {
         &self.history
+    }
+
+    #[allow(dead_code)]
+    /// Clears the cached weights and history log
+    pub fn clear_cache(&mut self) {
+        self.cache.clear();
+        self.history.clear();
+        println!("🧹 WeightEngine cache and history cleared.");
     }
 }

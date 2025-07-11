@@ -1,12 +1,12 @@
 // src/verify.rs
 
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, Signature, SigningKey, Verifier};
+use ed25519_dalek::{SECRET_KEY_LENGTH, Signer, SigningKey, Verifier};
 use rand::RngCore;
 use rand::rngs::OsRng;
 use thiserror::Error;
 
-use crate::vote::{DecayType, SignedVote};
+use crate::vote::SignedVote;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum VerificationError {
@@ -20,28 +20,28 @@ pub enum VerificationError {
 
 impl SignedVote {
     /// Generate a new signed vote
-    pub fn new(
-        voter_id: String,
-        proposal_id: String,
-        original_weight: f64,
-        decay_model: crate::vote::DecayType,
-        signing_key: &SigningKey,
-    ) -> Self {
-        let timestamp = Utc::now();
-        let message = format!("{}:{}:{}", voter_id, proposal_id, timestamp);
-        let signature = signing_key.sign(message.as_bytes());
-        let public_key = signing_key.verifying_key();
+pub fn new(
+    voter_id: String,
+    proposal_id: String,
+    original_weight: f64,
+    timestamp: DateTime<Utc>, // ✅ take from caller
+    decay_model: crate::vote::DecayType,
+    signing_key: &SigningKey,
+) -> Self {
+    let message = format!("{}:{}:{}", voter_id, proposal_id, timestamp);
+    let signature = signing_key.sign(message.as_bytes());
+    let public_key = signing_key.verifying_key();
 
-        Self {
-            voter_id,
-            proposal_id,
-            timestamp,
-            original_weight,
-            decay_model,
-            signature,
-            public_key,
-        }
+    Self {
+        voter_id,
+        proposal_id,
+        timestamp,
+        original_weight,
+        decay_model,
+        signature,
+        public_key,
     }
+}
 
     /// Verify the vote signature and timestamp
     pub fn verify(&self, max_age_secs: i64) -> Result<(), VerificationError> {

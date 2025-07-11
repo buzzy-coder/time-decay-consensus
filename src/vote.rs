@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
-use ed25519_dalek::{Signature, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 
 
-use ed25519_dalek::{Signer, Signature, SigningKey};
 #[derive(Debug, Clone, Copy)]
 pub enum DecayType {
     Linear,

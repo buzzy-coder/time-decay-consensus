@@ -1,22 +1,22 @@
 use chrono::{DateTime, Utc};
 use std::io;
 
-mod vote;
 mod decay;
-mod verify;
 mod threshold;
-mod weight_engine;
 mod trust;
+mod verify;
+mod vote;
+mod weight_engine;
 
-use vote::{SignedVote, DecayType, ProposalType};
-use verify::{verify, generate_keypair};
-use threshold::{ThresholdEscalator, EscalationPattern, ProgressionProfile};
-use weight_engine::WeightEngine;
+use threshold::{EscalationPattern, ProgressionProfile, ThresholdEscalator};
 use trust::TrustEngine;
+use vote::{DecayType, ProposalType, SignedVote};
+use weight_engine::WeightEngine;
 
 fn main() {
     // Step 1: Generate a keypair (in real use case, would be per-validator)
-    let (signing_key, verify_key) = generate_keypair();
+    let signing_key = SignedVote::generate_keypair();
+    let verify_key = signing_key.verifying_key();
 
     // Step 2: Collect dynamic input from user
     let mut input = String::new();
@@ -52,18 +52,17 @@ fn main() {
     };
 
     let now = Utc::now();
-    let vote = SignedVote {
-        voter_id: voter_id.clone(),
+    let vote = SignedVote::new(
+        voter_id.clone(),
         proposal_id,
-        timestamp: now,
         original_weight,
+        now, // 👈 Pass this to maintain consistency
         decay_model,
-        signature: vote::sign_vote(voter_id.clone(), &signing_key, now),
-        public_key: verify_key.clone(),
-    };
+        &signing_key,
+    );
 
     // Step 3: Verify vote signature
-    if verify(&vote, &verify_key) {
+    if vote.verify(300).is_ok() {
         println!("✅ Signature verification successful.");
     } else {
         println!("❌ Invalid vote signature. Exiting.");
@@ -75,7 +74,10 @@ fn main() {
     let trust_engine = TrustEngine::new();
     let weight = weight_engine.calculate_weight(&vote, now, Some(&trust_engine));
 
-    println!("🧮 Final vote weight after decay & trust bonus: {:.4}", weight);
+    println!(
+        "🧮 Final vote weight after decay & trust bonus: {:.4}",
+        weight
+    );
 
     // Step 5: Threshold evaluation based on proposal type
     let threshold_engine = match proposal_type {
@@ -98,7 +100,10 @@ fn main() {
     };
 
     let current_threshold = threshold_engine.threshold_with_profile(now, vote.timestamp);
-    println!("🔢 Required threshold at this time: {:.2}%", current_threshold * 100.0);
+    println!(
+        "🔢 Required threshold at this time: {:.2}%",
+        current_threshold * 100.0
+    );
 
     if threshold_engine.is_threshold_met(weight, current_threshold) {
         println!("✅ Vote passes threshold and minimum vote count");
@@ -109,6 +114,9 @@ fn main() {
     // Optional: Print weight history log
     println!("\n📜 Weight History Log:");
     for record in weight_engine.get_history() {
-        println!("- {} -> {:.4} at {:?}", record.vote_id, record.weight, record.timestamp);
+        println!(
+            "- {} -> {:.4} at {:?}",
+            record.vote_id, record.weight, record.timestamp
+        );
     }
 }
