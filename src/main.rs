@@ -2,12 +2,14 @@ use chrono::{DateTime, Utc};
 use std::io;
 
 mod decay;
+mod history;
 mod threshold;
 mod trust;
 mod verify;
 mod vote;
 mod weight_engine;
 
+use history::{HistoryAnalyzer, VoteRecord};
 use threshold::{EscalationPattern, ProgressionProfile, ThresholdEscalator};
 use trust::TrustEngine;
 use vote::{DecayType, ProposalType, SignedVote};
@@ -80,24 +82,9 @@ fn main() {
     );
 
     // Step 5: Threshold evaluation based on proposal type
-    let threshold_engine = match proposal_type {
-        ProposalType::Critical => ThresholdEscalator {
-            base_threshold: 0.75,
-            ceiling: 0.95,
-            pattern: EscalationPattern::Linear(0.015),
-            emergency_override: false,
-            profile: ProgressionProfile::Aggressive,
-            total_votes: 3,
-        },
-        ProposalType::Normal => ThresholdEscalator {
-            base_threshold: 0.51,
-            ceiling: 0.9,
-            pattern: EscalationPattern::Linear(0.01),
-            emergency_override: false,
-            profile: ProgressionProfile::Conservative,
-            total_votes: 3,
-        },
-    };
+    let mut threshold_engine = ThresholdEscalator::for_proposal_type(proposal_type);
+    threshold_engine.total_votes = 3; // or whatever count you simulate
+    threshold_engine.min_vote_count = 3;
 
     let current_threshold = threshold_engine.threshold_with_profile(now, vote.timestamp);
     println!(
@@ -105,11 +92,26 @@ fn main() {
         current_threshold * 100.0
     );
 
-    if threshold_engine.is_threshold_met(weight, current_threshold) {
-        println!("✅ Vote passes threshold and minimum vote count");
-    } else {
-        println!("❌ Vote rejected: weight or participation too low");
-    }
+    let passed = threshold_engine.is_threshold_met(weight, current_threshold);
+
+if passed {
+    println!("✅ Vote passes threshold and minimum vote count");
+} else {
+    println!("❌ Vote rejected: weight or participation too low");
+}
+
+// 📝 Record the vote result in history
+let mut history = HistoryAnalyzer::default(); // use persistent/global if needed
+let record = VoteRecord {
+    vote_id: vote.voter_id.clone(),
+    weight,
+    threshold: current_threshold,
+    passed,
+    timestamp: now,
+};
+history.record_vote(record);
+history.print_history();
+
 
     // Optional: Print weight history log
     println!("\n📜 Weight History Log:");

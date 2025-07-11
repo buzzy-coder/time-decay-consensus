@@ -24,6 +24,7 @@ pub struct ThresholdEscalator {
     pub emergency_override: bool,
     pub profile: ProgressionProfile,
     pub total_votes: usize,
+    pub min_vote_count: usize,
 }
 
 impl ThresholdEscalator {
@@ -51,26 +52,30 @@ impl ThresholdEscalator {
         }
     }
 
-     pub fn for_proposal_type(proposal_type: ProposalType) -> Self {
-        match proposal_type {
-            ProposalType::Normal => ThresholdEscalator {
-                base_threshold: 0.51,
-                ceiling: 0.9,
-                pattern: EscalationPattern::Linear(0.01),
-                emergency_override: false,
-                profile: ProgressionProfile::Conservative,
-                total_votes: 0,
-            },
-            ProposalType::Critical => ThresholdEscalator {
-                base_threshold: 0.75,
-                ceiling: 0.95,
-                pattern: EscalationPattern::Linear(0.02),
-                emergency_override: false,
-                profile: ProgressionProfile::Aggressive,
-                total_votes: 0,
-            },
-        }
+    pub fn for_proposal_type(proposal_type: ProposalType) -> Self {
+    match proposal_type {
+        ProposalType::Normal => ThresholdEscalator {
+            base_threshold: 0.51,
+            ceiling: 0.9,
+            pattern: EscalationPattern::Linear(0.01),
+            emergency_override: false,
+            profile: ProgressionProfile::Conservative,
+            total_votes: 0,
+            min_vote_count: 3, // Minimum 3 votes required
+        },
+        ProposalType::Critical => ThresholdEscalator {
+            base_threshold: 0.75,
+            ceiling: 0.95,
+            pattern: EscalationPattern::Linear(0.02),
+            emergency_override: false,
+            profile: ProgressionProfile::Aggressive,
+            total_votes: 0,
+            min_vote_count: 5, // Stricter requirement for critical proposals
+        },
     }
+    
+}
+
 
     /// Wrapper that adjusts time based on progression profile
     pub fn threshold_with_profile(&self, now: chrono::DateTime<chrono::Utc>, start: chrono::DateTime<chrono::Utc>) -> f64 {
@@ -95,9 +100,10 @@ impl ThresholdEscalator {
     }
 
     /// Multi-dimensional threshold check: weight + vote count
-    pub fn is_threshold_met(&self, weight: f64, required: f64) -> bool {
-        weight >= required && self.total_votes >= 3
-    }
+   pub fn is_threshold_met(&self, vote_weight: f64, current_threshold: f64) -> bool {
+    vote_weight >= current_threshold && self.total_votes >= self.min_vote_count
+}
+
 }
 
 #[cfg(test)]
@@ -105,7 +111,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
 
-    fn mock_escalator(pattern: EscalationPattern, profile: ProgressionProfile, votes: usize) -> ThresholdEscalator {
+    fn mock_escalator(pattern: EscalationPattern, profile: ProgressionProfile, votes: usize, min_votes: usize) -> ThresholdEscalator {
         ThresholdEscalator {
             base_threshold: 0.5,
             ceiling: 0.9,
@@ -113,41 +119,56 @@ mod tests {
             emergency_override: false,
             profile,
             total_votes: votes,
+            min_vote_count: min_votes,
         }
     }
 
     #[test]
     fn test_linear_with_profile() {
-        let esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Aggressive, 5);
-        assert!((esc.threshold_with_profile(Utc::now(), Utc::now() - chrono::Duration::seconds(30)) - 0.5 - 0.01 * 60.0).abs() < 0.01);
+        let esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Aggressive, 5, 3);
+        let now = Utc::now();
+        let earlier = now - chrono::Duration::seconds(30);
+        let expected = 0.5 + 0.01 * 60.0; // aggressive doubles time
+        let actual = esc.threshold_with_profile(now, earlier);
+        assert!((actual - expected).abs() < 0.01);
     }
 
     #[test]
     fn test_exponential_with_profile() {
-        let esc = mock_escalator(EscalationPattern::Exponential(0.01), ProgressionProfile::Conservative, 1);
+        let esc = mock_escalator(EscalationPattern::Exponential(0.01), ProgressionProfile::Conservative, 1, 1);
         let threshold = esc.threshold_with_profile(Utc::now(), Utc::now() - chrono::Duration::seconds(30));
         assert!(threshold > 0.5);
     }
 
     #[test]
     fn test_sigmoid_with_profile() {
-        let esc = mock_escalator(EscalationPattern::Sigmoid(0.1, 30.0), ProgressionProfile::Adaptive, 1);
+        let esc = mock_escalator(EscalationPattern::Sigmoid(0.1, 30.0), ProgressionProfile::Adaptive, 1, 1);
         let threshold = esc.threshold_with_profile(Utc::now(), Utc::now() - chrono::Duration::seconds(60));
         assert!(threshold > 0.5);
     }
 
     #[test]
     fn test_emergency_override() {
-        let mut esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Conservative, 10);
+        let mut esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Conservative, 10, 3);
         esc.emergency_override = true;
         assert_eq!(esc.threshold_with_profile(Utc::now(), Utc::now()), esc.ceiling);
     }
 
     #[test]
-    fn test_threshold_met_logic() {
-        let esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Adaptive, 3);
-        assert!(esc.is_threshold_met(0.75, 0.7));
-        assert!(!esc.is_threshold_met(0.65, 0.7));
-        assert!(!esc.is_threshold_met(0.75, 0.7) == false);
+    fn test_threshold_met_logic_passes() {
+        let esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Adaptive, 5, 3);
+        assert!(esc.is_threshold_met(0.75, 0.7)); // weight ≥ threshold AND total_votes ≥ min_vote_count
+    }
+
+    #[test]
+    fn test_threshold_met_logic_fails_weight() {
+        let esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Adaptive, 5, 3);
+        assert!(!esc.is_threshold_met(0.65, 0.7)); // weight < threshold
+    }
+
+    #[test]
+    fn test_threshold_met_logic_fails_votes() {
+        let esc = mock_escalator(EscalationPattern::Linear(0.01), ProgressionProfile::Adaptive, 2, 3);
+        assert!(!esc.is_threshold_met(0.75, 0.7)); // total_votes < min_vote_count
     }
 }
