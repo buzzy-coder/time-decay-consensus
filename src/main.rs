@@ -1,6 +1,3 @@
-use chrono::{DateTime, Utc};
-use std::io;
-
 mod decay;
 mod threshold;
 mod verify;
@@ -10,63 +7,56 @@ mod weight_engine;
 mod trust;
 mod history;
 mod simulation; 
+mod blockchain;
 
-use decay::DecayModel;
-use threshold::{ThresholdEscalator, EscalationPattern, ProgressionProfile};
+use threshold::ThresholdEscalator;
 use vote::{SignedVote, DecayType, ProposalType};
-use verify::VerificationError;
 use weight_engine::WeightEngine;
 use trust::TrustEngine;
 use history::{VoteRecord, HistoryAnalyzer};
 use simulation::run_simulation;
+use blockchain::Blockchain;
+use chrono::Utc;
+
+#[allow(unused_imports)]
+use decay::DecayModel;
+#[allow(unused_imports)]
+use verify::VerificationError;
+#[allow(unused_imports)]
+use blockchain::Block;
+
+
 
 fn main() {
-    // 🔁 Ask user if they want simulation
-    let mut input = String::new();
-    println!("Run simulation? (yes/no):");
-    io::stdin().read_line(&mut input).unwrap();
-    if input.trim().to_lowercase() == "yes" {
-        run_simulation();
-        return;
+    // Run simulation directly
+    run_simulation();
+
+    // Blockchain demonstration
+    println!("
+--- Blockchain Demonstration ---");
+    let mut blockchain = Blockchain::new();
+    blockchain.add_block("Transaction 1 Data".to_string());
+    blockchain.add_block("Transaction 2 Data".to_string());
+    blockchain.add_block("Transaction 3 Data".to_string());
+
+    println!("Blockchain is valid: {}", blockchain.is_valid());
+
+    for block in &blockchain.blocks {
+        println!("Block {}: {}", block.id, block.hash);
     }
+    println!("--------------------------------");
 
     #[warn(unused_variables)]
     // Step 1: Generate a keypair (validator)
     let signing_key = SignedVote::generate_keypair();
-    let verify_key = signing_key.verifying_key();
+    let _verify_key = signing_key.verifying_key();
 
-    // Step 2: Collect dynamic input from user
-    input.clear();
-    println!("Enter your voter ID:");
-    io::stdin().read_line(&mut input).unwrap();
-    let voter_id = input.trim().to_string();
-
-    input.clear();
-    println!("Enter proposal ID:");
-    io::stdin().read_line(&mut input).unwrap();
-    let proposal_id = input.trim().to_string();
-
-    input.clear();
-    println!("Enter original vote weight (e.g., 1.0):");
-    io::stdin().read_line(&mut input).unwrap();
-    let original_weight: f64 = input.trim().parse().unwrap_or(1.0);
-
-    input.clear();
-    println!("Enter decay model (linear / exponential / stepped):");
-    io::stdin().read_line(&mut input).unwrap();
-    let decay_model = match input.trim().to_lowercase().as_str() {
-        "linear" => DecayType::Linear,
-        "stepped" => DecayType::Stepped,
-        _ => DecayType::Exponential,
-    };
-
-    input.clear();
-    println!("Proposal type (normal / critical):");
-    io::stdin().read_line(&mut input).unwrap();
-    let proposal_type = match input.trim().to_lowercase().as_str() {
-        "critical" => ProposalType::Critical,
-        _ => ProposalType::Normal,
-    };
+    // Step 2: Hardcoded input
+    let voter_id = "hardcoded_voter".to_string();
+    let proposal_id = "hardcoded_proposal".to_string();
+    let original_weight: f64 = 0.75;
+    let decay_model = DecayType::Linear;
+    let proposal_type = ProposalType::Normal;
 
     // Step 3: Create vote
     let now = Utc::now();
@@ -119,16 +109,19 @@ fn main() {
     history.record_vote(record);
 
     // Logs
-    println!("\n📊 Historical Vote Log:");
+    println!("
+📊 Historical Vote Log:");
     history.print_history();
 
-    println!("\n📜 Weight History Log:");
+    println!("
+📜 Weight History Log:");
     for record in weight_engine.get_history() {
         println!(
             "- {} -> {:.4} at {:?}",
             record.vote_id, record.weight, record.timestamp
         );
     }
+
 }
 
 
