@@ -452,6 +452,7 @@ dependencies = [
  "chrono",
  "ed25519-dalek",
  "rand",
+ "signature",
  "thiserror",
 ]
 

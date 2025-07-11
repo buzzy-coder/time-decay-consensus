@@ -59,3 +59,71 @@ impl HistoryAnalyzer {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Utc};
+
+    fn sample_vote(vote_id: &str, weight: f64, threshold: f64, passed: bool) -> VoteRecord {
+        VoteRecord {
+            vote_id: vote_id.to_string(),
+            weight,
+            threshold,
+            passed,
+            timestamp: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_record_and_history() {
+        let mut analyzer = HistoryAnalyzer::default();
+
+        let vote1 = sample_vote("vote1", 0.6, 0.5, true);
+        analyzer.record_vote(vote1.clone());
+
+        assert_eq!(analyzer.records.len(), 1);
+        assert_eq!(analyzer.records[0].vote_id, "vote1");
+        assert_eq!(analyzer.records[0].passed, true);
+
+        analyzer.print_history(); // Should not panic
+    }
+
+    #[test]
+    fn test_average_margin() {
+        let mut analyzer = HistoryAnalyzer::default();
+
+        analyzer.record_vote(sample_vote("v1", 0.6, 0.5, true));  // margin +0.1
+        analyzer.record_vote(sample_vote("v2", 0.4, 0.5, false)); // margin -0.1
+
+        let avg_margin = analyzer.average_margin();
+        assert!((avg_margin - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_suggested_base_threshold() {
+        let mut analyzer = HistoryAnalyzer::default();
+
+        // Mostly passes
+        analyzer.record_vote(sample_vote("v1", 0.7, 0.5, true));
+        analyzer.record_vote(sample_vote("v2", 0.6, 0.5, true));
+        assert_eq!(analyzer.suggested_base_threshold(), 0.50);
+
+        // Mostly fails
+        let mut failing_analyzer = HistoryAnalyzer::default();
+        failing_analyzer.record_vote(sample_vote("v3", 0.4, 0.5, false));
+        failing_analyzer.record_vote(sample_vote("v4", 0.3, 0.5, false));
+        assert_eq!(failing_analyzer.suggested_base_threshold(), 0.55);
+    }
+
+    #[test]
+    fn test_empty_history() {
+        let analyzer = HistoryAnalyzer::default();
+
+        // Should handle empty gracefully
+        assert_eq!(analyzer.average_margin(), 0.0);
+        assert_eq!(analyzer.suggested_base_threshold(), 0.50);
+        analyzer.print_history(); // Should not panic
+    }
+}

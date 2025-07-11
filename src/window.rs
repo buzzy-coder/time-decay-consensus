@@ -56,3 +56,84 @@ impl VotingWindow {
         println!("⏳ Voting window extended by {} seconds!", extra_secs);
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Utc, Duration};
+
+    #[test]
+    fn test_window_creation() {
+        let now = Utc::now();
+        let vw_short = VotingWindow::new(now, WindowType::Short, 10);
+        assert_eq!(vw_short.duration_secs, 300);
+
+        let vw_medium = VotingWindow::new(now, WindowType::Medium, 10);
+        assert_eq!(vw_medium.duration_secs, 1800);
+
+        let vw_long = VotingWindow::new(now, WindowType::Long, 10);
+        assert_eq!(vw_long.duration_secs, 7200);
+
+        let vw_custom = VotingWindow::new(now, WindowType::Custom(42), 10);
+        assert_eq!(vw_custom.duration_secs, 42);
+    }
+
+    #[test]
+    fn test_is_open() {
+        let now = Utc::now();
+        let vw = VotingWindow::new(now, WindowType::Short, 10);
+
+        // Immediately after start, should be open
+        assert!(vw.is_open(now));
+
+        // After window + grace, should be closed
+        let after_deadline =
+            now + Duration::seconds((vw.duration_secs + vw.grace_secs + 1) as i64);
+        assert!(!vw.is_open(after_deadline));
+    }
+
+    #[test]
+    fn test_time_left() {
+        let now = Utc::now();
+        let vw = VotingWindow::new(now, WindowType::Short, 10);
+
+        // At start, full time left
+        assert_eq!(vw.time_left(now), vw.duration_secs as i64);
+
+        // Halfway
+        let halfway = now + Duration::seconds((vw.duration_secs / 2) as i64);
+        assert!((vw.time_left(halfway) - (vw.duration_secs as i64 / 2)).abs() <= 1);
+
+        // After deadline
+        let after = now + Duration::seconds((vw.duration_secs + 1) as i64);
+        assert!(vw.time_left(after) < 0);
+    }
+
+    #[test]
+    fn test_should_extend() {
+        let now = Utc::now();
+        let mut vw = VotingWindow::new(now, WindowType::Short, 10);
+
+        // Move close to end
+        let near_end =
+            now + Duration::seconds((vw.duration_secs - 15) as i64);
+        let threshold = 100.0;
+
+        // weight below 90% of threshold: should not extend
+        assert!(!vw.should_extend(near_end, 80.0, threshold));
+
+        // weight above 90% of threshold and within 20s: should extend
+        assert!(vw.should_extend(near_end, 95.0, threshold));
+    }
+
+    #[test]
+    fn test_extend() {
+        let now = Utc::now();
+        let mut vw = VotingWindow::new(now, WindowType::Short, 10);
+
+        let original_duration = vw.duration_secs;
+        vw.extend(60);
+        assert_eq!(vw.duration_secs, original_duration + 60);
+    }
+}

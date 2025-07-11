@@ -72,3 +72,53 @@ pub fn new(
 
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vote::{SignedVote, DecayType};
+    use chrono::{Utc, Duration};
+
+    fn mock_signed_vote(offset_secs: i64) -> SignedVote {
+        let signing_key = SignedVote::generate_keypair();
+        let timestamp = Utc::now() + Duration::seconds(offset_secs);
+        SignedVote::new(
+            "voter1".to_string(),
+            "proposal1".to_string(),
+            1.0,
+            timestamp,
+            DecayType::Linear, // use tuple variant syntax if Linear is defined as Linear(f64)
+            &signing_key,
+        )
+    }
+
+    #[test]
+    fn test_valid_vote() {
+        let vote = mock_signed_vote(0);
+        assert_eq!(vote.verify(10), Ok(()));
+    }
+
+    #[test]
+    fn test_vote_too_old() {
+        let vote = mock_signed_vote(-20);
+        let result = vote.verify(10);
+        assert_eq!(result, Err(VerificationError::TimestampExpired));
+    }
+
+    #[test]
+    fn test_vote_in_future() {
+        let vote = mock_signed_vote(10);
+        let result = vote.verify(5);
+        assert_eq!(result, Err(VerificationError::TimestampInFuture));
+    }
+
+    #[test]
+    fn test_invalid_signature() {
+        let mut vote = mock_signed_vote(0);
+        // Corrupt the signature bytes
+        vote.signature = ed25519_dalek::Signature::try_from([0u8; 64])
+    .expect("Failed to create dummy signature");
+        let result = vote.verify(10);
+        assert_eq!(result, Err(VerificationError::InvalidSignature));
+    }
+} 

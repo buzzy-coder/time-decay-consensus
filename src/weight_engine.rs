@@ -93,3 +93,123 @@ impl WeightEngine {
         println!("🧹 WeightEngine cache and history cleared.");
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use crate::trust::TrustEngine;
+    use crate::vote::{SignedVote, DecayType};
+    use ed25519_dalek::SigningKey;
+    use signature::Signer;
+
+    // Mocked decay models
+    pub struct LinearDecay {
+        pub rate: f64,
+    }
+    pub struct ExponentialDecay {
+        pub rate: f64,
+    }
+    pub struct SteppedDecay {
+        pub decay_steps: Vec<(f64, f64)>,
+    }
+
+    impl LinearDecay {
+        pub fn compute_weight(&self, original: f64, age: f64) -> f64 {
+            (original - self.rate * age).max(0.0)
+        }
+    }
+    impl ExponentialDecay {
+        pub fn compute_weight(&self, original: f64, age: f64) -> f64 {
+            original * (-self.rate * age).exp()
+        }
+    }
+    impl SteppedDecay {
+        pub fn compute_weight(&self, original: f64, age: f64) -> f64 {
+            for (threshold, factor) in &self.decay_steps {
+                if age <= *threshold {
+                    return original * *factor;
+                }
+            }
+            0.0
+        }
+    }
+
+    fn mock_signed_vote(decay: DecayType) -> SignedVote {
+        let signing_key = SigningKey::generate(&mut rand::rngs::OsRng);
+        let voter_id = "validator_001".to_string();
+        let proposal_id = "proposal_001".to_string();
+        let timestamp = Utc::now() - chrono::Duration::seconds(120);
+        let original_weight = 1.0;
+
+        let msg = format!("{}:{}:{}", voter_id, proposal_id, timestamp);
+        let signature = signing_key.sign(msg.as_bytes());
+
+        SignedVote {
+            voter_id,
+            proposal_id,
+            timestamp,
+            original_weight,
+            decay_model: decay,
+            signature,
+            public_key: signing_key.verifying_key(),
+        }
+    }
+
+    #[test]
+    fn test_calculate_weight_linear() {
+        let mut engine = WeightEngine::new();
+        let vote = mock_signed_vote(DecayType::Linear);
+        let now = Utc::now();
+
+        let weight = engine.calculate_weight(&vote, now, None);
+        assert!(weight >= 0.0, "Weight should be non-negative");
+        assert!(engine.cache.contains_key(&vote.voter_id));
+        assert_eq!(engine.history.len(), 1);
+    }
+
+    #[test]
+    fn test_calculate_weight_with_trust_bonus() {
+        let mut engine = WeightEngine::new();
+        let vote = mock_signed_vote(DecayType::Linear);
+        let now = Utc::now();
+
+        let trust = TrustEngine::new();
+
+        let weight_with_trust = engine.calculate_weight(&vote, now, Some(&trust));
+        assert!(weight_with_trust >= 1.0, "Trusted validator weight should increase");
+    }
+
+    #[test]
+    fn test_batch_calculate() {
+        let mut engine = WeightEngine::new();
+        let now = Utc::now();
+
+        let votes = vec![
+            mock_signed_vote(DecayType::Linear),
+            mock_signed_vote(DecayType::Exponential),
+            mock_signed_vote(DecayType::Stepped),
+        ];
+
+        let weights = engine.batch_calculate(&votes, now, None);
+        assert_eq!(weights.len(), votes.len());
+        assert_eq!(engine.history.len(), votes.len());
+    }
+
+    #[test]
+    fn test_clear_cache() {
+        let mut engine = WeightEngine::new();
+        let vote = mock_signed_vote(DecayType::Linear);
+        let now = Utc::now();
+
+        engine.calculate_weight(&vote, now, None);
+        assert!(!engine.cache.is_empty());
+        assert!(!engine.history.is_empty());
+
+        engine.clear_cache();
+
+        assert!(engine.cache.is_empty());
+        assert!(engine.history.is_empty());
+    }
+}

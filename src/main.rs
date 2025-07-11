@@ -9,7 +9,7 @@ mod window;
 mod weight_engine;
 mod trust;
 mod history;
-mod simulation; // ✅ Newly added
+mod simulation; 
 
 use decay::DecayModel;
 use threshold::{ThresholdEscalator, EscalationPattern, ProgressionProfile};
@@ -30,6 +30,7 @@ fn main() {
         return;
     }
 
+    #[warn(unused_variables)]
     // Step 1: Generate a keypair (validator)
     let signing_key = SignedVote::generate_keypair();
     let verify_key = signing_key.verifying_key();
@@ -127,5 +128,104 @@ fn main() {
             "- {} -> {:.4} at {:?}",
             record.vote_id, record.weight, record.timestamp
         );
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Utc, Duration};
+    use ed25519_dalek::SigningKey;
+
+    use crate::trust::TrustEngine;
+    use crate::vote::{DecayType, SignedVote};
+    use crate::weight_engine::WeightEngine;
+    use crate::threshold::{ThresholdEscalator, ProgressionProfile};
+    use crate::history::{HistoryAnalyzer, VoteRecord};
+    use crate::vote::ProposalType;
+
+    #[test]
+    fn test_signed_vote_verification() {
+        let signing_key = SignedVote::generate_keypair();
+        let now = Utc::now();
+
+        let vote = SignedVote::new(
+            "voter_123".to_string(),
+            "proposal_abc".to_string(),
+            1.0,
+            now,
+            DecayType::Linear,
+            &signing_key,
+        );
+
+        assert!(vote.verify(300).is_ok(), "Signature should verify within allowed time");
+
+        // simulate a future timestamp — should fail
+        let bad_vote = SignedVote::new(
+            "voter_123".to_string(),
+            "proposal_abc".to_string(),
+            1.0,
+            now + Duration::seconds(10),
+            DecayType::Linear,
+            &signing_key,
+        );
+        assert!(bad_vote.verify(300).is_err(), "Future timestamp should fail");
+    }
+
+    #[test]
+    fn test_weight_engine_with_trust() {
+        let signing_key = SignedVote::generate_keypair();
+        let now = Utc::now();
+
+        let vote = SignedVote::new(
+            "validator_001".to_string(),
+            "proposal_abc".to_string(),
+            2.0,
+            now - Duration::seconds(60),
+            DecayType::Exponential,
+            &signing_key,
+        );
+
+        let mut weight_engine = WeightEngine::new();
+        let trust_engine = TrustEngine::new();
+
+        let weight = weight_engine.calculate_weight(&vote, now, Some(&trust_engine));
+        assert!(weight > 0.0, "Weight should be positive");
+        assert!(weight > 2.0 * 0.5, "Weight with trust bonus should be reasonable");
+    }
+
+    #[test]
+    fn test_threshold_escalator() {
+        let mut escalator = ThresholdEscalator::for_proposal_type(ProposalType::Normal);
+        escalator.total_votes = 10;
+        escalator.min_vote_count = 5;
+
+        let now = Utc::now();
+        let threshold = escalator.threshold_with_profile(now, now);
+        let passed = escalator.is_threshold_met(0.6, threshold);
+
+        assert!(threshold >= 0.0 && threshold <= 1.0, "Threshold should be between 0 and 1");
+        assert!(
+            passed == (0.6 >= threshold),
+            "Pass condition should match weight vs. threshold"
+        );
+    }
+
+    #[test]
+    fn test_history_analyzer() {
+        let mut history = HistoryAnalyzer::default();
+        let now = Utc::now();
+
+        let record = VoteRecord {
+            vote_id: "voter_1".to_string(),
+            weight: 1.0,
+            threshold: 0.5,
+            passed: true,
+            timestamp: now,
+        };
+
+        history.record_vote(record.clone());
+        assert_eq!(history.records.len(), 1, "History should have one record");
+        assert_eq!(history.records[0].vote_id, "voter_1", "Recorded voter ID should match");
     }
 }
